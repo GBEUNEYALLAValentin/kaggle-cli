@@ -3686,7 +3686,8 @@ class KaggleApi:
                 error_txt = f" Message: {message}" if message else ""
                 print(f"Benchmark {kernel} failed!{error_txt}\nAttempting to download partial logs for debugging...")
                 try:
-                    self.kernels_output(kernel, path=path, file_pattern=None, force=True, quiet=False)
+                    out_path = path_obj / "output"
+                    self.kernels_output(kernel, path=str(out_path), file_pattern=None, force=True, quiet=False)
                 except Exception as log_err:
                     print(f"Could not retrieve backend logs: {log_err}")
                 raise ValueError("Benchmark execution terminated with an error state.")
@@ -3699,7 +3700,8 @@ class KaggleApi:
 
         # Now download output
         print(f"Downloading results for {kernel}...")
-        return self.kernels_output(kernel=kernel, path=path, file_pattern=None, force=True, quiet=False)
+        out_path = path_obj / "output"
+        return self.kernels_output(kernel=kernel, path=str(out_path), file_pattern=None, force=True, quiet=False)
 
     def benchmarks_get_results_cli(self, kernel, kernel_opt=None, path=None, poll_interval=60, timeout=None):
         self.benchmarks_get_results(kernel or kernel_opt, path=path, poll_interval=poll_interval, timeout=timeout)

@@ -170,7 +170,7 @@ class TestBenchmarks(unittest.TestCase):
         mock_sleep.assert_called_once_with(10)
         self.api.kernels_output.assert_called_once_with(
             kernel="testuser/my-bench",
-            path="some_path",
+            path=os.path.join("some_path", "output"),
             file_pattern=None,
             force=True,
             quiet=False,
@@ -209,7 +209,7 @@ class TestBenchmarks(unittest.TestCase):
             self.assertEqual(result, "output_data")
             self.api.kernels_output.assert_called_once_with(
                 kernel="implicit/my-bench",
-                path=tmpdir,
+                path=os.path.join(tmpdir, "output"),
                 file_pattern=None,
                 force=True,
                 quiet=False,
