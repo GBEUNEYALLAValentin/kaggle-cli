@@ -35,6 +35,7 @@ import time
 import zipfile
 from dateutil.relativedelta import relativedelta
 from os.path import expanduser
+from pathlib import Path
 from random import random
 
 import bleach
@@ -3525,7 +3526,6 @@ class KaggleApi:
         except ImportError:
             raise ImportError("jupytext is required for benchmarks functionality. Please install it.")
 
-        from pathlib import Path
         effective_path = self.kernels_pull(kernel, path=path, metadata=True, quiet=quiet)
         effective_path_obj = Path(effective_path)
 
@@ -3572,7 +3572,6 @@ class KaggleApi:
         except ImportError:
             raise ImportError("jupytext is required for benchmarks functionality. Please install it.")
 
-        from pathlib import Path
         path_obj = Path(path or os.getcwd())
         py_path = path_obj / (file_name or "benchmark.py")
 
@@ -3595,17 +3594,10 @@ class KaggleApi:
 
         # Ensure kernel-metadata.json exists and has "personal-benchmark"
         metadata_path = path_obj / self.KERNEL_METADATA_FILE
-        
-        if not metadata_path.exists():
-            if not kernel:
-                raise ValueError("A kernel slug must be specified to create a new metadata file.")
+        is_new_metadata = not metadata_path.exists()
 
-            owner_slug, kernel_slug = self._resolve_kernel_slug(kernel)
-
+        if is_new_metadata:
             metadata = {
-                "id": f"{owner_slug}/{kernel_slug}",
-                "title": kernel_slug.replace("-", " ").title(),
-                "code_file": "benchmark.ipynb",
                 "language": "python",
                 "kernel_type": "notebook",
                 "is_private": "true",
@@ -3615,30 +3607,38 @@ class KaggleApi:
                 "competition_sources": [],
                 "kernel_sources": [],
                 "model_sources": [],
-                "keywords": ["personal-benchmark"],
             }
         else:
             with open(metadata_path, "r") as f:
                 metadata = json.load(f)
 
-            if kernel:
-                owner_slug, kernel_slug = self._resolve_kernel_slug(kernel)
-                new_id = f"{owner_slug}/{kernel_slug}"
-                if metadata.get("id") != new_id:
-                    metadata["id"] = new_id
-                    metadata["title"] = kernel_slug.replace("-", " ").title()
-                    metadata.pop("id_no", None)
+        # The 'kernel' arg explicitly overrides the metadata ID and title.
+        # This is useful when pushing to a different kernel slug, or resolving missing metadata properties.
+        # However, if no 'kernel' is provided AND the metadata file doesn't exist yet, we must abort
+        # because we lack the necessary owner/slug information to create it from scratch.
+        if kernel:
+            owner_slug, kernel_slug = self._resolve_kernel_slug(kernel)
+            new_id = f"{owner_slug}/{kernel_slug}"
+            
+            if metadata.get("id") != new_id:
+                metadata.update({
+                    "id": new_id,
+                    "title": kernel_slug.replace("-", " ").title()
+                })
+                metadata.pop("id_no", None)
+        elif is_new_metadata:
+            raise ValueError("A kernel slug must be specified to create a new metadata file.")
 
-            metadata.setdefault("keywords", [])
-            if "personal-benchmark" not in metadata["keywords"]:
-                metadata["keywords"].append("personal-benchmark")
-            metadata["code_file"] = "benchmark.ipynb"
+        metadata.setdefault("keywords", [])
+        if "personal-benchmark" not in metadata["keywords"]:
+            metadata["keywords"].append("personal-benchmark")
+        metadata["code_file"] = "benchmark.ipynb"
 
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
             
         if not quiet:
-            msg_prefix = "Updated" if metadata_path.exists() else "Created"
+            msg_prefix = "Created" if is_new_metadata else "Updated"
             print(f"{msg_prefix} kernel metadata at {metadata_path}")
 
         # Now push using kernels_push
@@ -3652,20 +3652,23 @@ class KaggleApi:
     def benchmarks_get_results(self, kernel: str = None, path: str = None, poll_interval: int = 60, timeout: int = None):
         """Polls the status of a benchmark until complete, then downloads the output."""
 
-        from pathlib import Path
         path_obj = Path(path or os.getcwd())
 
+        # If the user didn't provide a kernel slug explicitly, attempt to infer it 
+        # from the local metadata file (e.g. kernel-metadata.json).
         if not kernel:
             meta_file = path_obj / self.KERNEL_METADATA_FILE
-            if meta_file.exists():
-                try:
+            try:
+                if meta_file.exists():
                     with open(meta_file, "r") as f:
                         kernel = json.load(f).get("id")
-                except Exception:
-                    pass
+            except (json.JSONDecodeError, OSError):
+                # Fail gracefully if the file is invalid or unreadable; 
+                # the fallback ValueError beneath will handle the missing kernel.
+                pass
                     
         if not kernel:
-            raise ValueError("A kernel must be specified")
+            raise ValueError("A kernel must be specified, either directly or via a valid local metadata file.")
 
         start_time = time.time()
         print(f"Waiting for benchmark {kernel} to complete...")
