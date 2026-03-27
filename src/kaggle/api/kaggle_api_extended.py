@@ -3508,15 +3508,14 @@ class KaggleApi:
         else:
             print('%s has status "%s"' % (kernel, status))
 
-    def _resolve_kernel_slug(self, kernel):
+    def _resolve_kernel_slug(self, kernel: str) -> tuple[str, str]:
         """Parses a kernel string into (owner_slug, kernel_slug)."""
         if "/" in kernel:
             self.validate_kernel_string(kernel)
-            owner_slug, kernel_slug = kernel.split("/")
-        else:
-            owner_slug = self.get_config_value(self.CONFIG_NAME_USER)
-            kernel_slug = kernel
-        return owner_slug, kernel_slug
+            owner_slug, kernel_slug = kernel.split("/", 1)
+            return owner_slug, kernel_slug
+        
+        return self.get_config_value(self.CONFIG_NAME_USER), kernel
 
     def benchmarks_pull(self, kernel: str, path: str = None, quiet: bool = False):
         """Pulls a benchmark notebook and converts it to a .py script."""
@@ -3526,40 +3525,41 @@ class KaggleApi:
         except ImportError:
             raise ImportError("jupytext is required for benchmarks functionality. Please install it.")
 
+        from pathlib import Path
         effective_path = self.kernels_pull(kernel, path=path, metadata=True, quiet=quiet)
+        effective_path_obj = Path(effective_path)
 
         # After pulling, find the .ipynb file in effective_path
-        ipynb_files = [f for f in os.listdir(effective_path) if f.endswith(".ipynb")]
+        ipynb_files = list(effective_path_obj.glob("*.ipynb"))
         if not ipynb_files:
             raise ValueError("Could not find a .ipynb file in the pulled kernel.")
 
         # Rename the first .ipynb file to benchmark.ipynb (if it isn't already)
-        ipynb_name = ipynb_files[0]
-        ipynb_path = os.path.join(effective_path, ipynb_name)
-        benchmark_ipynb_path = os.path.join(effective_path, "benchmark.ipynb")
-        if ipynb_name != "benchmark.ipynb":
-            os.rename(ipynb_path, benchmark_ipynb_path)
+        ipynb_path = ipynb_files[0]
+        benchmark_ipynb_path = effective_path_obj / "benchmark.ipynb"
+        
+        if ipynb_path.name != "benchmark.ipynb":
+            ipynb_path = ipynb_path.rename(benchmark_ipynb_path)
             if not quiet:
-                print(f"Renamed {ipynb_name} to benchmark.ipynb")
+                print(f"Renamed {ipynb_path.name} to benchmark.ipynb")
 
         # Convert to benchmark.py
-        benchmark_py_path = os.path.join(effective_path, "benchmark.py")
-        notebook = jupytext.read(benchmark_ipynb_path)
+        benchmark_py_path = effective_path_obj / "benchmark.py"
+        notebook = jupytext.read(str(benchmark_ipynb_path))
         
         # Strip confusing metadata formatting from the resulting Python document
-        if "jupytext" not in notebook.metadata:
-            notebook.metadata["jupytext"] = {}
-        notebook.metadata["jupytext"]["notebook_metadata_filter"] = "-all"
-        notebook.metadata["jupytext"]["cell_metadata_filter"] = "-all"
+        notebook.metadata.setdefault("jupytext", {}).update({
+            "notebook_metadata_filter": "-all",
+            "cell_metadata_filter": "-all"
+        })
         
-        jupytext.write(notebook, benchmark_py_path, fmt="py:percent")
+        jupytext.write(notebook, str(benchmark_py_path), fmt="py:percent")
         if not quiet:
             print(f"Converted benchmark.ipynb to {benchmark_py_path}")
         return effective_path
 
     def benchmarks_pull_cli(self, kernel, kernel_opt=None, path=None):
-        kernel = kernel or kernel_opt
-        effective_path = self.benchmarks_pull(kernel, path=path, quiet=False)
+        effective_path = self.benchmarks_pull(kernel or kernel_opt, path=path, quiet=False)
         print(f"Benchmark pulled and converted successfully to {effective_path}")
 
     def benchmarks_publish_and_run(
@@ -3572,41 +3572,39 @@ class KaggleApi:
         except ImportError:
             raise ImportError("jupytext is required for benchmarks functionality. Please install it.")
 
-        path = path or os.getcwd()
-        file_name = file_name or "benchmark.py"
-        py_path = os.path.join(path, file_name)
+        from pathlib import Path
+        path_obj = Path(path or os.getcwd())
+        py_path = path_obj / (file_name or "benchmark.py")
 
-        if not os.path.exists(py_path):
+        if not py_path.exists():
             raise FileNotFoundError(f"Source file not found: {py_path}")
 
-        ipynb_path = os.path.join(path, "benchmark.ipynb")
-        notebook = jupytext.read(py_path, fmt="py:percent")
+        ipynb_path = path_obj / "benchmark.ipynb"
+        notebook = jupytext.read(str(py_path), fmt="py:percent")
         
         # Inject default Kaggle kernelspec so Papermill executes the notebook correctly
-        if "kernelspec" not in notebook.metadata:
-            notebook.metadata["kernelspec"] = {
-                "display_name": "Python 3",
-                "language": "python",
-                "name": "python3"
-            }
+        notebook.metadata.setdefault("kernelspec", {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        })
 
-        jupytext.write(notebook, ipynb_path)
+        jupytext.write(notebook, str(ipynb_path))
         if not quiet:
             print(f"Converted {py_path} to {ipynb_path}")
 
         # Ensure kernel-metadata.json exists and has "personal-benchmark"
-        metadata_path = os.path.join(path, self.KERNEL_METADATA_FILE)
-        if not os.path.exists(metadata_path):
-            # Create a default metadata file
+        metadata_path = path_obj / self.KERNEL_METADATA_FILE
+        
+        if not metadata_path.exists():
             if not kernel:
                 raise ValueError("A kernel slug must be specified to create a new metadata file.")
 
             owner_slug, kernel_slug = self._resolve_kernel_slug(kernel)
 
-            title = kernel_slug.replace("-", " ").title()
             metadata = {
                 "id": f"{owner_slug}/{kernel_slug}",
-                "title": title,
+                "title": kernel_slug.replace("-", " ").title(),
                 "code_file": "benchmark.ipynb",
                 "language": "python",
                 "kernel_type": "notebook",
@@ -3619,62 +3617,54 @@ class KaggleApi:
                 "model_sources": [],
                 "keywords": ["personal-benchmark"],
             }
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2)
-            if not quiet:
-                print(f"Created kernel metadata at {metadata_path}")
         else:
-            # Read existing and inject keyword if missing
             with open(metadata_path, "r") as f:
                 metadata = json.load(f)
 
             if kernel:
                 owner_slug, kernel_slug = self._resolve_kernel_slug(kernel)
-
                 new_id = f"{owner_slug}/{kernel_slug}"
                 if metadata.get("id") != new_id:
                     metadata["id"] = new_id
                     metadata["title"] = kernel_slug.replace("-", " ").title()
-                    if "id_no" in metadata:
-                        del metadata["id_no"]
+                    metadata.pop("id_no", None)
 
-            if "keywords" not in metadata:
-                metadata["keywords"] = []
+            metadata.setdefault("keywords", [])
             if "personal-benchmark" not in metadata["keywords"]:
                 metadata["keywords"].append("personal-benchmark")
-            if "code_file" not in metadata or metadata["code_file"] != "benchmark.ipynb":
-                metadata["code_file"] = "benchmark.ipynb"
+            metadata["code_file"] = "benchmark.ipynb"
 
-            with open(metadata_path, "w") as f:
-                json.dump(metadata, f, indent=2)
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+            
+        if not quiet:
+            msg_prefix = "Updated" if metadata_path.exists() else "Created"
+            print(f"{msg_prefix} kernel metadata at {metadata_path}")
 
         # Now push using kernels_push
-        return self.kernels_push(path)
+        return self.kernels_push(str(path_obj))
 
     def benchmarks_publish_and_run_cli(self, kernel=None, kernel_opt=None, path=None, file_name=None):
-        kernel = kernel or kernel_opt
-        result = self.benchmarks_publish_and_run(kernel, path=path, file_name=file_name, quiet=False)
-        
-        url_text = ""
-        if result and getattr(result, "url", None):
-            url_text = f"\nTracking URL: {result.url}"
-            
+        result = self.benchmarks_publish_and_run(kernel or kernel_opt, path=path, file_name=file_name, quiet=False)
+        url_text = f"\nTracking URL: {result.url}" if getattr(result, "url", None) else ""
         print(f"Benchmark pushed and started successfully.{url_text}\nRun kaggle benchmarks tasks results to stream output.")
 
     def benchmarks_get_results(self, kernel: str = None, path: str = None, poll_interval: int = 60, timeout: int = None):
         """Polls the status of a benchmark until complete, then downloads the output."""
 
-        if kernel is None:
-            check_path = path or os.getcwd()
-            meta_file = os.path.join(check_path, self.KERNEL_METADATA_FILE)
-            if os.path.exists(meta_file):
-                with open(meta_file, "r") as f:
-                    try:
-                        metadata = json.load(f)
-                        kernel = metadata.get("id")
-                    except Exception:
-                        pass
-        if kernel is None:
+        from pathlib import Path
+        path_obj = Path(path or os.getcwd())
+
+        if not kernel:
+            meta_file = path_obj / self.KERNEL_METADATA_FILE
+            if meta_file.exists():
+                try:
+                    with open(meta_file, "r") as f:
+                        kernel = json.load(f).get("id")
+                except Exception:
+                    pass
+                    
+        if not kernel:
             raise ValueError("A kernel must be specified")
 
         start_time = time.time()
@@ -3682,24 +3672,24 @@ class KaggleApi:
 
         while True:
             response = self.kernels_status(kernel)
-            status = response.status
-            status_str = str(status).upper()
+            status_str = str(response.status).upper()
+            
             if "COMPLETE" in status_str:
                 print(f"Benchmark {kernel} completed.")
                 break
-            elif "ERROR" in status_str:
+            
+            if "ERROR" in status_str:
                 message = getattr(response, "failure_message", "")
                 error_txt = f" Message: {message}" if message else ""
-                print(f"Benchmark {kernel} failed!{error_txt}")
-                print(f"Attempting to download partial logs for debugging...")
+                print(f"Benchmark {kernel} failed!{error_txt}\nAttempting to download partial logs for debugging...")
                 try:
                     self.kernels_output(kernel, path=path, file_pattern=None, force=True, quiet=False)
                 except Exception as log_err:
                     print(f"Could not retrieve backend logs: {log_err}")
-                raise ValueError(f"Benchmark execution terminated with an error state.")
-            else:
-                print(f"Status: {status}. Waiting {poll_interval}s...")
-                time.sleep(poll_interval)
+                raise ValueError("Benchmark execution terminated with an error state.")
+            
+            print(f"Status: {response.status}. Waiting {poll_interval}s...")
+            time.sleep(poll_interval)
 
             if timeout is not None and (time.time() - start_time) > timeout:
                 raise TimeoutError(f"Timed out waiting for benchmark after {timeout} seconds.")
@@ -3709,8 +3699,7 @@ class KaggleApi:
         return self.kernels_output(kernel=kernel, path=path, file_pattern=None, force=True, quiet=False)
 
     def benchmarks_get_results_cli(self, kernel, kernel_opt=None, path=None, poll_interval=60, timeout=None):
-        kernel = kernel or kernel_opt
-        self.benchmarks_get_results(kernel, path=path, poll_interval=poll_interval, timeout=timeout)
+        self.benchmarks_get_results(kernel or kernel_opt, path=path, poll_interval=poll_interval, timeout=timeout)
         print("Output downloaded successfully.")
 
     def model_get(self, model: str) -> ApiModel:

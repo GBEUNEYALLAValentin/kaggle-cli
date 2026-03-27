@@ -644,63 +644,50 @@ def parse_benchmarks(subparsers) -> None:
     subparsers_benchmarks_tasks.required = True
     subparsers_benchmarks_tasks.choices = Help.benchmark_tasks_choices
 
+    def add_task_command(name, help_text, func, extra_args=None):
+        cmd_parser = subparsers_benchmarks_tasks.add_parser(
+            name, formatter_class=argparse.RawTextHelpFormatter, help=help_text
+        )
+        opt_group = cmd_parser._action_groups.pop()
+        opt_group.add_argument("kernel", nargs="?", default=None, help=Help.param_benchmark_kernel)
+        opt_group.add_argument("-k", "--kernel", dest="kernel_opt", required=False, help=argparse.SUPPRESS)
+        
+        for args, kwargs in (extra_args or []):
+            opt_group.add_argument(*args, **kwargs)
+            
+        cmd_parser._action_groups.append(opt_group)
+        cmd_parser.set_defaults(func=func)
+
     # Benchmarks Tasks pull
-    parser_benchmarks_pull = subparsers_benchmarks_tasks.add_parser(
-        "pull", formatter_class=argparse.RawTextHelpFormatter, help=Help.command_benchmarks_pull
+    add_task_command(
+        "pull",
+        Help.command_benchmarks_pull,
+        api.benchmarks_pull_cli,
+        [(("-p", "--path"), {"dest": "path", "required": False, "help": Help.param_benchmark_pull_path})]
     )
-    parser_benchmarks_pull_optional = parser_benchmarks_pull._action_groups.pop()
-    parser_benchmarks_pull_optional.add_argument("kernel", nargs="?", default=None, help=Help.param_benchmark_kernel)
-    parser_benchmarks_pull_optional.add_argument(
-        "-k", "--kernel", dest="kernel_opt", required=False, help=argparse.SUPPRESS
-    )
-    parser_benchmarks_pull_optional.add_argument(
-        "-p", "--path", dest="path", required=False, help=Help.param_benchmark_pull_path
-    )
-    parser_benchmarks_pull._action_groups.append(parser_benchmarks_pull_optional)
-    parser_benchmarks_pull.set_defaults(func=api.benchmarks_pull_cli)
 
     # Benchmarks publish_and_run
-    parser_benchmarks_publish = subparsers_benchmarks_tasks.add_parser(
+    add_task_command(
         "run",
-        formatter_class=argparse.RawTextHelpFormatter,
-        help=Help.command_benchmarks_publish_and_run,
+        Help.command_benchmarks_publish_and_run,
+        api.benchmarks_publish_and_run_cli,
+        [
+            (("-p", "--path"), {"dest": "path", "required": False, "help": Help.param_benchmark_push_path}),
+            (("-f", "--file"), {"dest": "file_name", "required": False, "help": Help.param_benchmark_file})
+        ]
     )
-    parser_benchmarks_publish_optional = parser_benchmarks_publish._action_groups.pop()
-    parser_benchmarks_publish_optional.add_argument("kernel", nargs="?", default=None, help=Help.param_benchmark_kernel)
-    parser_benchmarks_publish_optional.add_argument(
-        "-k", "--kernel", dest="kernel_opt", required=False, help=argparse.SUPPRESS
-    )
-    parser_benchmarks_publish_optional.add_argument(
-        "-p", "--path", dest="path", required=False, help=Help.param_benchmark_push_path
-    )
-    parser_benchmarks_publish_optional.add_argument(
-        "-f", "--file", dest="file_name", required=False, help=Help.param_benchmark_file
-    )
-    parser_benchmarks_publish._action_groups.append(parser_benchmarks_publish_optional)
-    parser_benchmarks_publish.set_defaults(func=api.benchmarks_publish_and_run_cli)
 
     # Benchmarks results
-    parser_benchmarks_results = subparsers_benchmarks_tasks.add_parser(
+    add_task_command(
         "results",
-        formatter_class=argparse.RawTextHelpFormatter,
-        help=Help.command_benchmarks_get_results,
+        Help.command_benchmarks_get_results,
+        api.benchmarks_get_results_cli,
+        [
+            (("-p", "--path"), {"dest": "path", "required": False, "help": Help.param_benchmark_results_path}),
+            (("--poll-interval",), {"dest": "poll_interval", "default": 60, "type": int, "help": Help.param_benchmark_poll_interval}),
+            (("--timeout",), {"dest": "timeout", "default": None, "type": int, "help": Help.param_benchmark_timeout})
+        ]
     )
-    parser_benchmarks_results_optional = parser_benchmarks_results._action_groups.pop()
-    parser_benchmarks_results_optional.add_argument("kernel", nargs="?", default=None, help=Help.param_benchmark_kernel)
-    parser_benchmarks_results_optional.add_argument(
-        "-k", "--kernel", dest="kernel_opt", required=False, help=argparse.SUPPRESS
-    )
-    parser_benchmarks_results_optional.add_argument(
-        "-p", "--path", dest="path", required=False, help=Help.param_benchmark_results_path
-    )
-    parser_benchmarks_results_optional.add_argument(
-        "--poll-interval", dest="poll_interval", default=60, type=int, help=Help.param_benchmark_poll_interval
-    )
-    parser_benchmarks_results_optional.add_argument(
-        "--timeout", dest="timeout", default=None, type=int, help=Help.param_benchmark_timeout
-    )
-    parser_benchmarks_results._action_groups.append(parser_benchmarks_results_optional)
-    parser_benchmarks_results.set_defaults(func=api.benchmarks_get_results_cli)
 
 
 def parse_models(subparsers) -> None:
